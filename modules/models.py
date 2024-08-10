@@ -23,7 +23,7 @@ class DecisionTreeBased_AdaBoost:
         samples_num = len(outputs)
         weights = np.full((samples_num), 1/samples_num) # initialize default weight
 
-        mask = np.where(outputs != Y, alpha, -alpha) # assign alpha for correct outputs, -alpha for incorrect outputs
+        mask = np.where(outputs != Y, alpha, -alpha) # assign alpha for incorrect outputs, -alpha for correct outputs
         new_weights = weights * np.exp(mask) # get new weights 
         normalized_weights = new_weights / np.sum(new_weights) # normalize to range [0,1]
 
