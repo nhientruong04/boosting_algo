@@ -238,3 +238,70 @@ class GradientBoostRegressor(GradientBoost):
 
         # update index of trees split with best metric
         self.best_metric_split = np.argmin(self.metric_list) + 1
+
+class GradientBoostBinaryClassifier(GradientBoost):
+    def __init__(self, learning_rate=0.1, n_estimators=100, **tree_kwargs):
+        super().__init__(learning_rate=learning_rate, n_estimators=n_estimators)
+        self.tree_kwargs = tree_kwargs
+
+    def __probs_2_logodds(self, probs: np.ndarray):
+        assert np.min(probs)>=0 and np.max(probs)<=1, "Invalid probs range"
+
+        return np.round(np.log(probs/(1-probs + 1e-6)), decimals=2)
+
+    def __logodds_2_probs(self, log_odds: np.ndarray):
+        return np.round(np.exp(log_odds) / (1+np.exp(log_odds)), decimals=2)
+
+    def __get_gamma_for_all_leaves(self, leaves_indices: np.ndarray, r_it: np.ndarray, Ft_x: np.ndarray):
+        assert len(leaves_indices.shape)==1 and len(leaves_indices)==len(Ft_x) 
+
+        ret = dict()
+
+        for j in np.unique(leaves_indices):
+            mask = leaves_indices == j # get samples indices at the same leaf node
+
+            converted_Ft = self.__logodds_2_probs(Ft_x)
+            gamma_j = np.sum(r_it[mask]) / np.sum(converted_Ft[mask]*(1-converted_Ft[mask]))
+            
+            ret[j] = gamma_j
+
+        return ret
+
+    def predict(self, X, split="all"):
+        pred_logodds = self._predict(X, split)
+        
+        return (self.__logodds_2_probs(pred_logodds) > 0.5) * 1 # convert probs to {0,1} classes
+    
+    def validate(self, val_X, val_Y, split="all"):
+        preds = self.predict(val_X, split=split)
+
+        return accuracy_score(val_Y, preds)
+
+    def fit(self, train_X, train_Y, val_X, val_Y):
+        # empty previous run
+        if len(self._trees_list) > 0:
+            self._trees_list = list()
+            self._gammas_list = list()
+            self.metric_list = list()
+
+        self._F0_x = self.__probs_2_logodds(np.sum(train_Y)/len(train_Y)) # remember the first avg value
+        Ft_x = np.full(len(train_X), self._F0_x)
+
+        for t in range(self.T):
+            r_it = train_Y - self.__logodds_2_probs(Ft_x)
+
+            tree_t = DecisionTreeRegressor(criterion='friedman_mse', **self.tree_kwargs)
+            tree_t.fit(train_X, r_it)
+
+            leaves_indices = tree_t.apply(train_X) # get leaf region indices for all samples
+            gamma_t = self.__get_gamma_for_all_leaves(leaves_indices, r_it, Ft_x)
+            Ft_x += self.nu * self._convert_indices_to_residuals(leaves_indices, gamma_t) # update F(x) with this run residuals
+
+            self._trees_list.append(tree_t)
+            self._gammas_list.append(gamma_t)
+
+            # calculate metric for this iteration
+            self.metric_list.append(self.validate(val_X, val_Y))
+
+        # update index of trees split with best metric
+        self.best_metric_split = np.argmin(self.metric_list) + 1
