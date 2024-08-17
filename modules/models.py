@@ -142,20 +142,56 @@ class AdaBoostSampleWeights(DecisionTreeBased_AdaBoost):
         # update index of trees split with best metric
         self.best_metric_split = np.argmax(self.metric_list) + 1
 
-
-class GradientBoostRegressor:
-    def __init__(self, learning_rate=0.1, n_estimators=10, **tree_kwargs):
-        self.T = n_estimators
-        self.best_metric_split = 0
+class GradientBoost:
+    def __init__(self, learning_rate, n_estimators):
         self.nu = learning_rate
-        self.F0_x = 0
-        self.tree_kwargs = tree_kwargs
+        self.T = n_estimators
 
-        self.trees_list = list()
-        self.gammas_list = list()
+        self.best_metric_split = 0
+        self._F0_x = 0
+
+        self._trees_list = list()
+        self._gammas_list = list()
         self.metric_list = list()
 
-    def __get_gamma_for_all_leaves(self, leaves_indices, r_it):
+    def _convert_indices_to_residuals(self, leaves_indices: np.ndarray, residuals_dict: np.ndarray):
+        residuals_array_len = np.max(list(residuals_dict.keys())) + 1
+        residuals_array = np.zeros(residuals_array_len)
+        residuals_array[list(residuals_dict.keys())] = list(residuals_dict.values())
+
+        return np.take(a=residuals_array, indices=leaves_indices)
+    
+    def _predict(self, X, split="all"):
+        assert split in ["all", "best"]
+
+        if split == "best":
+            assert len(self._trees_list) > 0, "Empty trees list"
+
+            trees_list = self._trees_list[:self.best_metric_split]
+            gammas_list = self._gammas_list[:self.best_metric_split]
+        else:
+            trees_list = self._trees_list
+            gammas_list = self._gammas_list
+
+        Ft_x = np.full(len(X), self._F0_x)
+
+        for t, tree_t in enumerate(trees_list):
+            leaves_indices = tree_t.apply(X)
+            res_t = self._convert_indices_to_residuals(leaves_indices, gammas_list[t]) # get residuals correspond to leaves indices of the samples
+
+            Ft_x += self.nu * res_t
+
+        return Ft_x
+    
+    def validate(self):
+        pass
+
+class GradientBoostRegressor(GradientBoost):
+    def __init__(self, learning_rate=0.1, n_estimators=10, **tree_kwargs):
+        super().__init__(learning_rate=learning_rate, n_estimators=n_estimators)
+        self.tree_kwargs = tree_kwargs
+
+    def __get_gamma_for_all_leaves(self, leaves_indices: np.ndarray, r_it: np.ndarray):
         ret = dict()
 
         for j in np.sort(np.unique(leaves_indices)):
@@ -165,52 +201,24 @@ class GradientBoostRegressor:
             ret[j] = gamma_j
 
         return ret
-    
-    def __convert_indices_to_residuals(self, leaves_indices: np.ndarray, residuals_dict: np.ndarray):
-        residuals_array_len = np.max(list(residuals_dict.keys())) + 1
-        residuals_array = np.zeros(residuals_array_len)
-        residuals_array[list(residuals_dict.keys())] = list(residuals_dict.values())
-
-        return np.take(a=residuals_array, indices=leaves_indices)
 
     def predict(self, X, split="all"):
-        assert split in ["all", "best"]
-
-        if split == "best":
-            assert len(self.trees_list) > 0, "Empty trees list"
-
-            trees_list = self.trees_list[:self.best_metric_split]
-            gammas_list = self.gammas_list[:self.best_metric_split]
-        else:
-            trees_list = self.trees_list
-            gammas_list = self.gammas_list
-
-        Ft_x = np.full(len(X), self.F0_x)
-
-        for t, tree_t in enumerate(trees_list):
-            leaves_indices = tree_t.apply(X)
-            res_t = self.__convert_indices_to_residuals(leaves_indices, gammas_list[t]) # get residuals correspond to leaves indices of the samples
-
-            Ft_x += self.nu * res_t
-
-        return Ft_x
+        return self._predict(X, split)
     
     def validate(self, val_X, val_Y, split="all"):
-        assert split in ["all", "best"]
-
         preds = self.predict(val_X, split=split)
 
         return mean_squared_error(val_Y, preds)
 
     def fit(self, train_X, train_Y, val_X, val_Y):
         # empty previous run
-        if len(self.trees_list) > 0:
-            self.trees_list = list()
-            self.gammas_list = list()
+        if len(self._trees_list) > 0:
+            self._trees_list = list()
+            self._gammas_list = list()
             self.metric_list = list()
         
-        self.F0_x = np.round(np.mean(train_Y), decimals=2) # remember the first avg value
-        Ft_x = np.full(len(train_X), self.F0_x)
+        self._F0_x = np.round(np.mean(train_Y), decimals=2) # remember the first avg value
+        Ft_x = np.full(len(train_X), self._F0_x)
 
         for t in range(self.T):
             r_it = train_Y - Ft_x
@@ -220,10 +228,10 @@ class GradientBoostRegressor:
 
             leaves_indices = tree_t.apply(train_X) # get leaf region indices for all samples
             gamma_t = self.__get_gamma_for_all_leaves(leaves_indices, r_it)
-            Ft_x += self.nu * self.__convert_indices_to_residuals(leaves_indices, gamma_t) # update F(x) with this run residuals
+            Ft_x += self.nu * self._convert_indices_to_residuals(leaves_indices, gamma_t) # update F(x) with this run residuals
 
-            self.trees_list.append(tree_t)
-            self.gammas_list.append(gamma_t)
+            self._trees_list.append(tree_t)
+            self._gammas_list.append(gamma_t)
 
             # calculate metric for this iteration
             self.metric_list.append(self.validate(val_X, val_Y))
