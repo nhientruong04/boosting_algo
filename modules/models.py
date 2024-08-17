@@ -288,7 +288,11 @@ class GradientBoostBinaryClassifier(GradientBoost):
         Ft_x = np.full(len(train_X), self._F0_x)
 
         for t in range(self.T):
-            r_it = train_Y - self.__logodds_2_probs(Ft_x)
+            r_it = np.round(train_Y - self.__logodds_2_probs(Ft_x), decimals=2)
+
+            if np.sum(np.abs(r_it)<0.05) > np.ceil(0.8*len(train_X)):
+                print(f"Early stopped at {t}-th tree")
+                break
 
             tree_t = DecisionTreeRegressor(criterion='friedman_mse', **self.tree_kwargs)
             tree_t.fit(train_X, r_it)
