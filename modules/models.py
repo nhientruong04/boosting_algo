@@ -304,4 +304,4 @@ class GradientBoostBinaryClassifier(GradientBoost):
             self.metric_list.append(self.validate(val_X, val_Y))
 
         # update index of trees split with best metric
-        self.best_metric_split = np.argmin(self.metric_list) + 1
+        self.best_metric_split = np.argmax(self.metric_list) + 1
