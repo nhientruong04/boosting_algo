@@ -13,6 +13,12 @@ class DecisionTreeBased_AdaBoost:
         self.alphas_list = list()
         self.metric_list = list()
     
+    def __aggregate(self, preds, alphas):
+        aggregated_preds = np.sum(preds * np.expand_dims(alphas, axis=(1,2)), axis=0)
+        
+        return np.argmax(aggregated_preds, axis=1)
+
+
     def predict(self, X, split="all"):
         assert split in ["all", "best"]
 
@@ -28,14 +34,21 @@ class DecisionTreeBased_AdaBoost:
         outputs = list()
 
         for tree_t in trees_list:
-            outputs.append(tree_t.predict(X))
+            preds = tree_t.predict(X)
+            
+            class_num = 2 # rely on existence of all classes, potential bug
+            template_arr = np.zeros((X.shape[0], class_num)) #shape (n_samples, n_classes)
+            
+            preds_indices = np.expand_dims(preds, axis=1)
 
-        outputs = np.array(outputs) # shape (n_trees, n_samples)
-
-        # convert outputs {0,1} to {-1,1} and aggregate to get final preds
-        aggregated_outputs = np.sum((outputs*2-1) * np.expand_dims(alphas, axis=1), axis=0) # shape (n_samples,)
+            # change 1 dim preds to 2 dims n_samples x n_classes with one-hot encoding
+            np.put_along_axis(template_arr, preds_indices, 1, axis=1)
+            outputs.append(template_arr) # shape (n_samples, n_classes)
         
-        return np.clip(np.sign(aggregated_outputs), a_min=0, a_max=1)
+        final_preds =  self.__aggregate(np.array(outputs), alphas) # shape (n_trees, n_samples, n_classes)
+
+        return final_preds
+        
     
     def validate(self, y_true, val_X, split="all"):
         assert split in ["all", "best"]
@@ -46,9 +59,6 @@ class DecisionTreeBased_AdaBoost:
 
 
     def fit(self):
-        pass
-
-    def __get_next_iteration(self):
         pass
 
 class AdaBoostRandomized(DecisionTreeBased_AdaBoost):
@@ -111,7 +121,7 @@ class AdaBoostSampleWeights(DecisionTreeBased_AdaBoost):
 
         alpha = get_alpha(outputs, Y, sample_weights)
 
-        mask = np.where(outputs != Y, alpha, 1) # assign alpha for incorrect outputs, 1 for correct outputs
+        mask = np.where(outputs != Y, alpha, 0) # assign alpha for incorrect outputs, 1 for correct outputs
         new_weights = sample_weights * np.exp(mask) # get new weights 
         normalized_weights = new_weights / np.sum(new_weights) # normalize to range [0,1]
 
@@ -309,3 +319,17 @@ class GradientBoostBinaryClassifier(GradientBoost):
 
         # update index of trees split with best metric
         self.best_metric_split = np.argmax(self.metric_list) + 1
+
+
+if __name__ == "__main__":
+
+    from sklearn import datasets
+    from sklearn.model_selection import train_test_split
+
+    X, Y = datasets.load_breast_cancer(return_X_y=True)
+    train_X, val_X, train_Y, val_Y = train_test_split(X, Y, test_size=0.3)
+
+    model = AdaBoostSampleWeights()
+    model.fit(train_X, train_Y, val_X, val_Y)
+
+    print(model.validate(val_Y, val_X, "best"))
